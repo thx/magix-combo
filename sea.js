@@ -78,4 +78,4 @@ var require;
     return mod.exports
   }
 
-})(this)
+})(this);

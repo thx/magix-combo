@@ -28,3 +28,5 @@ gulp.task("preCombo", ['copy'],function(callback) {
 })
 
 ```
+
+> 请注意，对于动态加载的view。此工具是无法分析的，另外由于是通过正则分析的，所以就算view被注释，也会被打包进去

@@ -8,11 +8,18 @@ var process = require('process')
 var through = require('through2')
 var combineTool = require('magix-combine')
 
-var magixViewReg = /(?:mx|data)-view\s*=\s*("[^"]*"|'[^']*'|[^'">\s]*)/g
+var magixViewReg = /(?:mx|data)-view\s*=\s*\\?("[^"]*"|'[^']*'|[^'">\s]*)/g
 var cssReg = /Magix\.applyStyle\((?:"[^"]*"|'[^']*'|[^'">\s\n]*)\,?\s*("[^"]*"|'[^']*'|[^'">\s\n]*)\)/g
 
 var seaContents = fs.readFileSync(__dirname + '/sea.js')
 var rootBase = process.cwd()
+
+var innerJsPath = ''
+var innerCssPath = ''
+var cssContents = ''
+var jsContents = ''
+
+
 
 // 配置magix combine
 combineTool.config({
@@ -22,43 +29,27 @@ combineTool.config({
   loaderType: 'cmd'
 })
 
-// 分析以哪些js为入口
-var collectResources = function(pageHtml, options) {
-  var extra = options.extra
-  var results = [],
-    match, basename
-  while (match = magixViewReg.exec(pageHtml)) {
-    basename = match[1].replace(/'|"/g, '')
-    results.push({
-      id: basename,
-      isView: true,
-      file: rootBase + '/' + basename + '.js'
-    })
-  }
+// 分析页面中有哪些view
+var collectViews = function(pageHtml) {
 
-  if (extra && extra instanceof Function) {
-    var extraJs = extra(options) || []
-    for (var i = 0; i < extraJs.length; i++) {
+  var results = [],
+    match, basename, file
+  while (match = magixViewReg.exec(pageHtml)) {
+    basename = match[1].replace(/'|"|\\/g, '')
+    file = rootBase + '/' + basename + '.js'
+    if (fs.existsSync(file)) {
       results.push({
-        id: extraJs[i],
+        id: basename,
         isView: true,
-        file: rootBase + '/' + extraJs[i] + '.js'
+        file: file
       })
     }
   }
 
-  var extName = path.extname(options.path)
-  var innerJsPath = options.path.replace(rootBase, '').replace(extName, '.js')
-  results.push({
-    id: innerJsPath,
-    isBoot: true,
-    file: rootBase + innerJsPath
-  })
-
   return results
 }
 
-var analyseDeps = function(needAnalyseResources, callback) {
+var generateDics = function(viewLists, callback) {
 
   var dicsContents = ''
   var dicsArray = []
@@ -71,83 +62,164 @@ var analyseDeps = function(needAnalyseResources, callback) {
     return data
   })).on('end', function() {
     dicsArray = JSON.parse(dicsContents)
+
     callback(dicsArray)
   })
-
-  needAnalyseResources.forEach(function(resource) {
+  viewLists.forEach(function(resource) {
     md.write(resource)
   })
   md.end()
 }
 
-/*分析html页面，生成对应的js*/
-var combo = function(options, callback) {
-  var pageHtml = options.contents
-
-  var needAnalyseResources = collectResources(pageHtml, options)
-
-  var pageName = path.basename(options.path).split('.')[0]
-  var buildDir = path.dirname(options.path)
-  var pagePath = buildDir + '/' + pageName
-  var innerCssPath = pagePath + '.less'
-
-  analyseDeps(needAnalyseResources, function(dicsArray) {
-    var counts = dicsArray.length
-    var jsContents = seaContents
-    var cssContents = fs.readFileSync(innerCssPath)
-    var entryJs = ''
-
-    var handle = function() {
-      counts--
-      if (counts === 0) {
-        fs.writeFileSync(pagePath + '.js', jsContents + entryJs)
-        fs.writeFileSync(pagePath + '.less', cssContents)
-        if (options.transform) {
-          pageHtml = options.transform(pageHtml)
-        }
-        callback && callback(pageHtml)
-      }
-    }
-
-    dicsArray.forEach(function(dic, index) {
-      //对source进行加工，变成amd里面define的包裹格式
-      if (!/define\s*\(\s*['"]\s*[\w\/]+['"]/.test(dic.source) && !dic.isBoot) {
-
-        combineTool.processContent(dic.file, '', dic.source).then(function(source) {
-          jsContents += source.replace(cssReg, function(match, css) {
-            cssContents += css.replace(/'|"/g, '')
-            return ''
-          })
-          handle()
-        })
-      } else if (dic.isBoot) {
-        entryJs = dic.source // 最后处理，加在文件的最后面
-        handle()
-      } else {
-        jsContents += dic.source
-        handle()
-      }
-
+var wrapDefine = function(dic,callback){
+  //对source进行加工，变成amd里面define的包裹格式
+  if (!/define\s*\(\s*['"]\s*[\w\/]+['"]/.test(dic.source) && !dic.isBoot) {
+    combineTool.processContent(dic.file, '', dic.source).then(function(source) {
+      callback(source)
     })
-  })
-
+  }else{
+    callback(dic.source)
+  }
 }
 
 
+
+
 module.exports = function(config) {
+
   return through.obj(function(file, enc, cb) {
 
     var contents = file.contents.toString(enc)
-    var path = file.path
+    var filePath = file.path
+    var extName = path.extname(filePath)
+
+    innerJsPath = filePath.replace(extName, '.js')
+    innerCssPath = filePath.replace(extName, '.less')
+
+    jsContents = fs.readFileSync(innerJsPath)
+    cssContents = fs.readFileSync(innerCssPath)
+
+    var resultHtml = ''
+    if (config.transform) {
+      resultHtml = config.transform(contents)
+    }else{
+      resultHtml = contents
+    }
+
+
+
+    var hasHandled = {}
+    var handleDicLists = []
+
+    var collectInnerDics = function(source,callback){
+      // 处理html，需要递归的去找里面的view
+      var viewLists = collectViews(source)
+
+      if (!viewLists || viewLists.length === 0){
+        callback()
+        return
+      }
+
+      generateDics(viewLists,function(dicsArray){
+
+        handleDicLists = handleDicLists.concat(dicsArray)
+        callback()
+      })
+    }
+
+    var handleDic = function(dic,next){
+      if (hasHandled[dic.id]){
+        next()
+        return
+      }else{
+        hasHandled[dic.id] = true
+      }
+      wrapDefine(dic,function(source){
+
+        // 处理css
+        source = source.replace(cssReg, function(match, css) {
+          cssContents += css.replace(/'|"/g, '')
+          return ''
+        })
+        // 合并js
+        if (dic.isBoot) {
+          jsContents = jsContents + source
+        }else{
+          jsContents = source + jsContents
+        }
+        // 对于view来说，我们还要递归去找子view
+        if (/Magix\.View/.test(source)) {
+          collectInnerDics(source,function(){
+            next()
+          })
+        }else{
+          next()
+        }
+
+      })
+    }
+
+    var handleDicArray = function(callback){
+      var next = function() {
+        var one = handleDicLists.shift()
+
+        if (one) {
+          handleDic(one, next)
+        }else{
+          callback && callback()
+        }
+      }
+      next()
+    }
+
+    /*分析html页面，生成对应的js*/
+    var combo = function(options, callback) {
+      var pageHtml = options.contents
+
+      var viewLists = collectViews(pageHtml, options)
+      // 加入入口js
+      viewLists.push({
+        id: innerJsPath,
+        isBoot: true,
+        file: innerJsPath
+      })
+
+      // 加入extra
+      var extra = options.extra
+
+      if (extra && extra instanceof Function) {
+        var extraJs = extra(options) || []
+        for (var i = 0; i < extraJs.length; i++) {
+          viewLists.push({
+            id: extraJs[i],
+            isView: true,
+            file: rootBase + '/' + extraJs[i] + '.js'
+          })
+        }
+      }
+
+      generateDics(viewLists,function(dicsArray){
+
+        handleDicLists = handleDicLists.concat(dicsArray)
+        handleDicArray(function(){
+          var pagePath = options.path.replace('html', '')
+          fs.writeFileSync(innerJsPath, seaContents + jsContents)
+          fs.writeFileSync(innerCssPath, cssContents)
+          callback()
+        })
+
+      })
+
+    }
 
     combo({
       contents: contents,
-      path: path,
+      path: filePath,
       extra: config.extra,
       transform: config.transform,
       dir: config.dir
-    }, function(htmlstr) {
-      file.contents = new Buffer(htmlstr)
+    }, function() {
+      file.contents = new Buffer(resultHtml)
       cb(null, file)
     })
 
