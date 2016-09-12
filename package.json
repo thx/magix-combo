@@ -1,6 +1,6 @@
 {
   "name": "magix-combo",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "无线端自动分析页面引用view的js，自动合并。也会合并引用的样式。",
   "main": "index.js",
   "repository": {
