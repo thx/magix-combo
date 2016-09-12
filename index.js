@@ -96,7 +96,7 @@ module.exports = function(config) {
     innerJsPath = filePath.replace(extName, '.js')
     innerCssPath = filePath.replace(extName, '.less')
 
-    jsContents = fs.readFileSync(innerJsPath)
+    jsContents =  '' // fs.readFileSync(innerJsPath)
     cssContents = fs.readFileSync(innerCssPath)
 
     var resultHtml = ''
