@@ -9,7 +9,7 @@ var through = require('through2')
 var combineTool = require('magix-combine')
 
 var magixViewReg = /(?:mx|data)-view\s*=\s*\\?("[^"]*"|'[^']*'|[^'">\s]*)/g
-var cssReg = /Magix\.applyStyle\((?:"[^"]*"|'[^']*'|[^'">\s\n]*)\,?\s*("[^"]*"|'[^']*'|[^'">\s\n]*)\)/g
+var cssReg = /Magix\.applyStyle\('[^']+?'\,?\s*"([\s\S]+?\})"\)/g
 
 var seaContents = fs.readFileSync(__dirname + '/sea.js')
 var rootBase = process.cwd()
@@ -138,7 +138,7 @@ module.exports = function(config) {
 
         // 处理css
         source = source.replace(cssReg, function(match, css) {
-          cssContents += css.replace(/'|"/g, '')
+          cssContents += css.replace(/\\"/g, '"')
           return ''
         })
         // 合并js
