@@ -26,7 +26,8 @@ combineTool.config({
   prefix: 'mx',
   tmplFolder: './',
   tmplCommand: /<%[\s\S]+?%>/g,
-  loaderType: 'cmd'
+  loaderType: 'cmd',
+  addEventPrefix: false // 事件前缀
 })
 
 // 分析页面中有哪些view
